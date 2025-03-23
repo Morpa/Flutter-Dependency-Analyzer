@@ -1,0 +1,90 @@
+name: Go Build and Auto Release
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+jobs:
+  build-and-release:
+    name: Build and Auto Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24.1'
+
+    # Gerar número de versão automático baseado em data + número do commit
+    - name: Generate version number
+      id: version
+      run: |
+        DATE=$(date +'%Y%m%d')
+        COMMIT_COUNT=$(git rev-list --count HEAD)
+        VERSION="v0.${DATE}.${COMMIT_COUNT}"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Versão gerada: $VERSION"
+
+    # Criar tag automaticamente
+    - name: Create Tag
+      if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git tag -a $VERSION -m "Versão automática $VERSION"
+        git push origin $VERSION
+
+    - name: Build for Windows, macOS and Linux
+      run: |
+        mkdir -p build
+        
+        # Build para Windows
+        GOOS=windows GOARCH=amd64 go build -o build/barrel-gen-windows-amd64.exe .
+        
+        # Build para macOS
+        GOOS=darwin GOARCH=amd64 go build -o build/barrel-gen-darwin-amd64 .
+        GOOS=darwin GOARCH=arm64 go build -o build/barrel-gen-darwin-arm64 .
+        
+        # Build para Linux
+        GOOS=linux GOARCH=amd64 go build -o build/barrel-gen-linux-amd64 .
+        GOOS=linux GOARCH=arm64 go build -o build/barrel-gen-linux-arm64 .
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: barrel-gen-binaries
+        path: build/
+        
+    # Criar release automaticamente
+    - name: Create Release
+      if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: |
+          build/barrel-gen-windows-amd64.exe
+          build/barrel-gen-darwin-amd64
+          build/barrel-gen-darwin-arm64
+          build/barrel-gen-linux-amd64
+          build/barrel-gen-linux-arm64
+        tag_name: ${{ env.VERSION }}
+        name: Release ${{ env.VERSION }}
+        draft: false
+        prerelease: false
+        body: |
+          Versão automática gerada pelo GitHub Actions
+          Data: $(date +'%Y-%m-%d %H:%M:%S')
